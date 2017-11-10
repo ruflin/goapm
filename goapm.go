@@ -8,6 +8,8 @@ import (
 
 	uuid "github.com/satori/go.uuid"
 
+	"sync"
+
 	"github.com/elastic/beats/libbeat/common"
 )
 
@@ -16,16 +18,18 @@ const (
 )
 
 type APM struct {
-	data         common.MapStr
-	app          *app
-	transactions map[uuid.UUID]*Transaction
-	host         string
+	data              common.MapStr
+	app               *app
+	transactions      map[uuid.UUID]*Transaction
+	transactionsMutex *sync.Mutex
+	host              string
 }
 
 func NewAPM(appName, appVersion string) *APM {
 	apm := &APM{
-		host:         "http://localhost:8200/",
-		transactions: map[uuid.UUID]*Transaction{},
+		host:              "http://localhost:8200/",
+		transactions:      map[uuid.UUID]*Transaction{},
+		transactionsMutex: &sync.Mutex{},
 	}
 	apm.app = newApp(appName, appVersion)
 
@@ -35,12 +39,18 @@ func NewAPM(appName, appVersion string) *APM {
 func (apm *APM) StartTransaction() *Transaction {
 	t := NewTransaction()
 	t.Start()
+	apm.transactionsMutex.Lock()
 	apm.transactions[t.id] = t
+	apm.transactionsMutex.Unlock()
+
 	return t
 }
 
 func (apm *APM) extractFinishedTransactions() []*Transaction {
 	var finished []*Transaction
+
+	apm.transactionsMutex.Lock()
+	defer apm.transactionsMutex.Unlock()
 
 	for _, t := range apm.transactions {
 		if t.Finished() {
